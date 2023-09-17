@@ -21,7 +21,7 @@ from ppdet.core.workspace import register, create
 from ppdet.modeling.layers import ConvNormLayer
 from .roi_extractor import RoIAlign
 from ..cls_utils import _get_class_default_kwargs
-
+import paddle.profiler as profiler
 
 @register
 class MaskFeat(nn.Layer):
@@ -183,17 +183,22 @@ class MaskHead(nn.Layer):
         inputs (dict): ground truth info
         """
         tgt_labels, _, tgt_gt_inds = targets
-        rois, rois_num, tgt_classes, tgt_masks, mask_index, tgt_weights = self.mask_assigner(
-            rois, tgt_labels, tgt_gt_inds, inputs)
+        with profiler.RecordEvent(name='MaskHead::assign_mask'):
+            rois, rois_num, tgt_classes, tgt_masks, mask_index, tgt_weights = self.mask_assigner(
+                rois, tgt_labels, tgt_gt_inds, inputs)
 
-        if self.share_bbox_feat:
-            rois_feat = paddle.gather(bbox_feat, mask_index)
-        else:
-            rois_feat = self.roi_extractor(body_feats, rois, rois_num)
-        mask_feat = self.head(rois_feat)
-        mask_logits = self.mask_fcn_logits(mask_feat)
-
-        loss_mask = self.get_loss(mask_logits, tgt_classes, tgt_masks,
+        with profiler.RecordEvent(name='MaskHead::roi_extractor'):
+            if self.share_bbox_feat:
+                rois_feat = paddle.gather(bbox_feat, mask_index)
+            else:
+                rois_feat = self.roi_extractor(body_feats, rois, rois_num)
+        with profiler.RecordEvent(name='MaskHead::head'):
+            mask_feat = self.head(rois_feat)
+        with profiler.RecordEvent(name='MaskHead::mask_fcn_logits'):
+            mask_logits = self.mask_fcn_logits(mask_feat)
+        
+        with profiler.RecordEvent(name='MaskHead::get_loss'):
+            loss_mask = self.get_loss(mask_logits, tgt_classes, tgt_masks,
                                   tgt_weights)
         return {'loss_mask': loss_mask}
 

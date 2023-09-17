@@ -22,7 +22,7 @@ from .anchor_generator import AnchorGenerator
 from .target_layer import RPNTargetAssign
 from .proposal_generator import ProposalGenerator
 from ..cls_utils import _get_class_default_kwargs
-
+import paddle.profiler as profiler
 
 class RPNFeat(nn.Layer):
     """
@@ -126,7 +126,8 @@ class RPNHead(nn.Layer):
         return {'in_channel': input_shape.channels}
 
     def forward(self, feats, inputs):
-        rpn_feats = self.rpn_feat(feats)
+        with profiler.RecordEvent(name='RPNHead::rpn_feat'):
+            rpn_feats = self.rpn_feat(feats)
         scores = []
         deltas = []
 
@@ -137,10 +138,11 @@ class RPNHead(nn.Layer):
             deltas.append(rrd)
 
         anchors = self.anchor_generator(rpn_feats)
-
-        rois, rois_num = self._gen_proposal(scores, deltas, anchors, inputs)
+        with profiler.RecordEvent(name='RPNHead::gen_proposal'):
+            rois, rois_num = self._gen_proposal(scores, deltas, anchors, inputs)
         if self.training:
-            loss = self.get_loss(scores, deltas, anchors, inputs)
+            with profiler.RecordEvent(name='RPNHead::get_loss'):
+                loss = self.get_loss(scores, deltas, anchors, inputs)
             return rois, rois_num, loss
         else:
             return rois, rois_num, None
@@ -267,9 +269,9 @@ class RPNHead(nn.Layer):
                 shape=(v.shape[0], -1, 4)) for v in pred_deltas
         ]
         deltas = paddle.concat(deltas, axis=1)
-
-        score_tgt, bbox_tgt, loc_tgt, norm = self.rpn_target_assign(inputs,
-                                                                    anchors)
+        with profiler.RecordEvent(name='RPNHead::rpn_target_assign'):
+            score_tgt, bbox_tgt, loc_tgt, norm = self.rpn_target_assign(inputs,
+                                                                        anchors)
 
         scores = paddle.reshape(x=scores, shape=(-1, ))
         deltas = paddle.reshape(x=deltas, shape=(-1, 4))
@@ -277,11 +279,14 @@ class RPNHead(nn.Layer):
         score_tgt = paddle.concat(score_tgt)
         score_tgt.stop_gradient = True
 
+        
         pos_mask = score_tgt == 1
-        pos_ind = paddle.nonzero(pos_mask)
+        with profiler.RecordEvent(name='RPNHead::generate_pos_ind'):
+            pos_ind = paddle.nonzero(pos_mask)
 
         valid_mask = score_tgt >= 0
-        valid_ind = paddle.nonzero(valid_mask)
+        with profiler.RecordEvent(name='RPNHead::generate_valid_ind'):
+            valid_ind = paddle.nonzero(valid_mask)
 
         # cls loss
         if valid_ind.shape[0] == 0:
