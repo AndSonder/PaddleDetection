@@ -15,7 +15,7 @@
 import numpy as np
 import paddle
 from ..bbox_utils import bbox2delta, bbox_overlaps
-
+import paddle.profiler as profiler
 
 def rpn_anchor_target(anchors,
                       gt_boxes,
@@ -358,13 +358,14 @@ def generate_mask_target(gt_segms, rois, labels_int32, sampled_gt_inds,
                 new_segm.append(gt_segms_per_im[i])
         fg_inds_new = fg_inds.reshape([-1]).numpy()
         results = []
-        if len(gt_segms_per_im) > 0:
-            for j in range(fg_inds_new.shape[0]):
-                results.append(
-                    rasterize_polygons_within_box(new_segm[j], boxes[j],
-                                                  resolution))
-        else:
-            results.append(paddle.ones([resolution, resolution], dtype='int32'))
+        with profiler.RecordEvent(name='MaskHead::assign_mask::rasterize_polygons_within_box'):
+            if len(gt_segms_per_im) > 0:
+                for j in range(fg_inds_new.shape[0]):
+                    results.append(
+                        rasterize_polygons_within_box(new_segm[j], boxes[j],
+                                                    resolution))
+            else:
+                results.append(paddle.ones([resolution, resolution], dtype='int32'))
 
         fg_classes = paddle.gather(labels_per_im, fg_inds)
         weight = paddle.ones([fg_rois.shape[0]], dtype='float32')
