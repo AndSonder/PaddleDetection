@@ -16,6 +16,7 @@ import numpy as np
 import paddle
 from ..bbox_utils import bbox2delta, bbox_overlaps
 import paddle.profiler as profiler
+from paddle.fluid import core
 
 def rpn_anchor_target(anchors,
                       gt_boxes,
@@ -36,12 +37,17 @@ def rpn_anchor_target(anchors,
         gt_bbox = gt_boxes[i]
         is_crowd_i = is_crowd[i] if is_crowd else None
         # Step1: match anchor and gt_bbox
+        core.nvprof_nvtx_push("RPNHead::RPNTargetAssign::label_box")
         matches, match_labels = label_box(
             anchors, gt_bbox, rpn_positive_overlap, rpn_negative_overlap, True,
             ignore_thresh, is_crowd_i, assign_on_cpu)
+        core.nvprof_nvtx_pop()
         # Step2: sample anchor 
+
+        core.nvprof_nvtx_push("RPNHead::RPNTargetAssign::sample_bbox")
         fg_inds, bg_inds = subsample_labels(match_labels, rpn_batch_size_per_im,
                                             rpn_fg_fraction, 0, use_random)
+        core.nvprof_nvtx_pop()
         # Fill with the ignore label (-1), then set positive and negative labels
         labels = paddle.full(match_labels.shape, -1, dtype='int32')
         if bg_inds.shape[0] > 0:
@@ -49,6 +55,7 @@ def rpn_anchor_target(anchors,
         if fg_inds.shape[0] > 0:
             labels = paddle.scatter(labels, fg_inds, paddle.ones_like(fg_inds))
         # Step3: make output  
+        core.nvprof_nvtx_push("RPNHead::RPNTargetAssign::mask_output")
         if gt_bbox.shape[0] == 0:
             matched_gt_boxes = paddle.zeros([matches.shape[0], 4])
             tgt_delta = paddle.zeros([matches.shape[0], 4])
@@ -57,10 +64,12 @@ def rpn_anchor_target(anchors,
             tgt_delta = bbox2delta(anchors, matched_gt_boxes, weights)
             matched_gt_boxes.stop_gradient = True
             tgt_delta.stop_gradient = True
+        core.nvprof_nvtx_pop()
         labels.stop_gradient = True
         tgt_labels.append(labels)
         tgt_bboxes.append(matched_gt_boxes)
         tgt_deltas.append(tgt_delta)
+        
 
     return tgt_labels, tgt_bboxes, tgt_deltas
 
@@ -358,14 +367,15 @@ def generate_mask_target(gt_segms, rois, labels_int32, sampled_gt_inds,
                 new_segm.append(gt_segms_per_im[i])
         fg_inds_new = fg_inds.reshape([-1]).numpy()
         results = []
-        with profiler.RecordEvent(name='MaskHead::assign_mask::rasterize_polygons_within_box'):
-            if len(gt_segms_per_im) > 0:
-                for j in range(fg_inds_new.shape[0]):
-                    results.append(
-                        rasterize_polygons_within_box(new_segm[j], boxes[j],
-                                                    resolution))
-            else:
-                results.append(paddle.ones([resolution, resolution], dtype='int32'))
+        
+
+        if len(gt_segms_per_im) > 0:
+            for j in range(fg_inds_new.shape[0]):
+                results.append(
+                    rasterize_polygons_within_box(new_segm[j], boxes[j],
+                                                resolution))
+        else:
+            results.append(paddle.ones([resolution, resolution], dtype='int32'))
 
         fg_classes = paddle.gather(labels_per_im, fg_inds)
         weight = paddle.ones([fg_rois.shape[0]], dtype='float32')
