@@ -26,6 +26,7 @@ from ..shape_spec import ShapeSpec
 from ..bbox_utils import bbox2delta
 from ..cls_utils import _get_class_default_kwargs
 from ppdet.modeling.layers import ConvNormLayer
+import paddle.profiler as profiler
 
 __all__ = ['TwoFCHead', 'XConvNormHead', 'BBoxHead']
 
@@ -267,15 +268,23 @@ class BBoxHead(nn.Layer):
         inputs (dict{Tensor}): The ground-truth of image
         """
         if self.training:
-            rois, rois_num, targets = self.bbox_assigner(rois, rois_num, inputs)
+            with profiler.RecordEvent(name='BBox::bbox_assigner'):
+                rois, rois_num, targets = self.bbox_assigner(rois, rois_num, inputs)
             self.assigned_rois = (rois, rois_num)
             self.assigned_targets = targets
+<<<<<<< HEAD
 
         rois_feat = self.roi_extractor(body_feats, rois, rois_num)
         if self.data_format == "NHWC":
             rois_feat = rois_feat.transpose([0, 2, 3, 1])
 
         bbox_feat = self.head(rois_feat)
+=======
+        with profiler.RecordEvent(name='BBox::roi_extractor'):
+            rois_feat = self.roi_extractor(body_feats, rois, rois_num)
+        with profiler.RecordEvent(name='BBox::head'):
+            bbox_feat = self.head(rois_feat)    
+>>>>>>> 1a4f63aa8160c5de7b0caa4d9501d64bb6822e13
         if self.with_pool:
             feat = F.adaptive_avg_pool2d(bbox_feat, output_size=1, data_format=self.data_format)
             if self.data_format == "NHWC":
@@ -292,7 +301,8 @@ class BBoxHead(nn.Layer):
         deltas = self.bbox_delta(feat)
 
         if self.training:
-            loss = self.get_loss(
+            with profiler.RecordEvent(name='BBox::get_loss'):
+                loss = self.get_loss(
                 scores,
                 deltas,
                 targets,
@@ -300,9 +310,9 @@ class BBoxHead(nn.Layer):
                 self.bbox_weight,
                 loss_normalize_pos=self.loss_normalize_pos)
             
-            if self.cot_relation is not None:
-                loss_cot = self.loss_cot(cot_scores, targets, self.cot_relation)
-                loss.update(loss_cot)
+                if self.cot_relation is not None:
+                    loss_cot = self.loss_cot(cot_scores, targets, self.cot_relation)
+                    loss.update(loss_cot)
             return loss, bbox_feat
         else:
             if cot:
