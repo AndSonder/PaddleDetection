@@ -272,19 +272,14 @@ class BBoxHead(nn.Layer):
                 rois, rois_num, targets = self.bbox_assigner(rois, rois_num, inputs)
             self.assigned_rois = (rois, rois_num)
             self.assigned_targets = targets
-<<<<<<< HEAD
-
-        rois_feat = self.roi_extractor(body_feats, rois, rois_num)
-        if self.data_format == "NHWC":
-            rois_feat = rois_feat.transpose([0, 2, 3, 1])
-
-        bbox_feat = self.head(rois_feat)
-=======
+            
         with profiler.RecordEvent(name='BBox::roi_extractor'):
             rois_feat = self.roi_extractor(body_feats, rois, rois_num)
+            if self.data_format == "NHWC":
+                rois_feat = rois_feat.transpose([0, 2, 3, 1])
+
         with profiler.RecordEvent(name='BBox::head'):
             bbox_feat = self.head(rois_feat)    
->>>>>>> 1a4f63aa8160c5de7b0caa4d9501d64bb6822e13
         if self.with_pool:
             feat = F.adaptive_avg_pool2d(bbox_feat, output_size=1, data_format=self.data_format)
             if self.data_format == "NHWC":
