@@ -44,7 +44,8 @@ from ppdet.data.source.sniper_coco import SniperCOCODataSet
 from ppdet.data.source.category import get_categories
 import ppdet.utils.stats as stats
 from ppdet.utils.fuse_utils import fuse_conv_bn
-from ppdet.utils import profiler
+# from ppdet.utils import profiler
+import paddle.profiler as profiler
 from ppdet.modeling.post_process import multiclass_nms
 from ppdet.modeling.lane_utils import imshow_lanes
 
@@ -55,6 +56,8 @@ from paddle.distributed.fleet.utils.hybrid_parallel_util import fused_allreduce_
 
 from ppdet.utils.logger import setup_logger
 logger = setup_logger('ppdet.engine')
+
+from paddle.fluid import core
 
 __all__ = ['Trainer']
 
@@ -509,6 +512,14 @@ class Trainer(object):
         use_fused_allreduce_gradients = self.cfg[
             'use_fused_allreduce_gradients'] if 'use_fused_allreduce_gradients' in self.cfg else False
 
+        # # 创建性能分析器相关的代码
+        # def my_on_trace_ready(prof): # 定义回调函数，性能分析器结束采集数据时会被调用
+        #     callback = profiler.export_chrome_tracing('./profiler_demo') # 创建导出性能数据到 profiler_demo 文件夹的回调函数
+        #     callback(prof)  # 执行该导出函数
+        #     prof.summary(sorted_by=profiler.SortedKeys.CPUTotal, op_detail=True) # 打印表单，按 GPUTotal 排序表单项
+        
+        # p = profiler.Profiler(scheduler = [0, 3], on_trace_ready=my_on_trace_ready, timer_only=False) # 初始化 Profiler 对象
+        
         for epoch_id in range(self.start_epoch, self.cfg.epoch):
             self.status['mode'] = 'train'
             self.status['epoch_id'] = epoch_id
@@ -517,9 +528,15 @@ class Trainer(object):
             model.train()
             iter_tic = time.time()
             for step_id, data in enumerate(self.loader):
+                if step_id == 20:
+                    core.nvprof_start()
+                    core.nvprof_enable_record_event()
+                
+                if step_id >= 20:
+                    core.nvprof_nvtx_push("Step {}".format(step_id))
                 self.status['data_time'].update(time.time() - iter_tic)
                 self.status['step_id'] = step_id
-                profiler.add_profiler_step(profiler_options)
+                # profiler.add_profiler_step(profiler_options)
                 self._compose_callback.on_step_begin(self.status)
                 data['epoch_id'] = epoch_id
                 if self.cfg.get('to_static',
@@ -579,6 +596,11 @@ class Trainer(object):
                         # model backward
                         loss.backward()
                     self.optimizer.step()
+                if step_id >= 20:
+                    core.nvprof_nvtx_pop()
+                if step_id ==  30:
+                    core.nvprof_stop()
+                    exit()
                 curr_lr = self.optimizer.get_lr()
                 self.lr.step()
                 if self.cfg.get('unstructured_prune'):

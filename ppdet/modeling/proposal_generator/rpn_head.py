@@ -22,7 +22,8 @@ from .anchor_generator import AnchorGenerator
 from .target_layer import RPNTargetAssign
 from .proposal_generator import ProposalGenerator
 from ..cls_utils import _get_class_default_kwargs
-
+import paddle.profiler as profiler
+from paddle.fluid import core
 
 class RPNFeat(nn.Layer):
     """
@@ -126,7 +127,9 @@ class RPNHead(nn.Layer):
         return {'in_channel': input_shape.channels}
 
     def forward(self, feats, inputs):
+        core.nvprof_nvtx_push("RPNHead::rpn_feat")
         rpn_feats = self.rpn_feat(feats)
+        core.nvprof_nvtx_pop()
         scores = []
         deltas = []
 
@@ -137,10 +140,14 @@ class RPNHead(nn.Layer):
             deltas.append(rrd)
 
         anchors = self.anchor_generator(rpn_feats)
-
+        core.nvprof_nvtx_push("RPNHead::gen_proposal")
         rois, rois_num = self._gen_proposal(scores, deltas, anchors, inputs)
+        core.nvprof_nvtx_pop()
+
         if self.training:
+            core.nvprof_nvtx_push("RPNHead::get_loss")
             loss = self.get_loss(scores, deltas, anchors, inputs)
+            core.nvprof_nvtx_pop()
             return rois, rois_num, loss
         else:
             return rois, rois_num, None
@@ -267,9 +274,10 @@ class RPNHead(nn.Layer):
                 shape=(v.shape[0], -1, 4)) for v in pred_deltas
         ]
         deltas = paddle.concat(deltas, axis=1)
-
+        core.nvprof_nvtx_push("RPNHead::rpn_target_assign")
         score_tgt, bbox_tgt, loc_tgt, norm = self.rpn_target_assign(inputs,
                                                                     anchors)
+        core.nvprof_nvtx_pop()
 
         scores = paddle.reshape(x=scores, shape=(-1, ))
         deltas = paddle.reshape(x=deltas, shape=(-1, 4))
@@ -277,8 +285,11 @@ class RPNHead(nn.Layer):
         score_tgt = paddle.concat(score_tgt)
         score_tgt.stop_gradient = True
 
+        
         pos_mask = score_tgt == 1
+        core.nvprof_nvtx_push("RPNHead::generate_pos_ind")
         pos_ind = paddle.nonzero(pos_mask)
+        core.nvprof_nvtx_pop()
 
         valid_mask = score_tgt >= 0
         valid_ind = paddle.nonzero(valid_mask)

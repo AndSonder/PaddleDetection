@@ -21,7 +21,7 @@ import numpy as np
 
 @register
 @serializable
-class RPNTargetAssign(object):
+class getAssign(object):
     __shared__ = ['assign_on_cpu']
     """
     RPN targets assignment module

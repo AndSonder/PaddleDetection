@@ -19,6 +19,8 @@ from __future__ import print_function
 import paddle
 from ppdet.core.workspace import register, create
 from .meta_arch import BaseArch
+import paddle.profiler as profiler
+from paddle.fluid import core
 
 __all__ = ['MaskRCNN']
 
@@ -87,17 +89,29 @@ class MaskRCNN(BaseArch):
     def _forward(self):
         body_feats = self.backbone(self.inputs)
         if self.neck is not None:
+            core.nvprof_nvtx_push("MaskRCNN::neck")
             body_feats = self.neck(body_feats)
+            core.nvprof_nvtx_pop()
 
         if self.training:
+            core.nvprof_nvtx_push("MaskRCNN::rpn_head")
             rois, rois_num, rpn_loss = self.rpn_head(body_feats, self.inputs)
+            core.nvprof_nvtx_pop()
+
+            core.nvprof_nvtx_push("MaskRCNN::bbox_head")
+            
             bbox_loss, bbox_feat = self.bbox_head(body_feats, rois, rois_num,
                                                   self.inputs)
             rois, rois_num = self.bbox_head.get_assigned_rois()
             bbox_targets = self.bbox_head.get_assigned_targets()
+            core.nvprof_nvtx_pop()
+
             # Mask Head needs bbox_feat in Mask RCNN
+            core.nvprof_nvtx_push("MaskRCNN::mask_head")
+            
             mask_loss = self.mask_head(body_feats, rois, rois_num, self.inputs,
                                        bbox_targets, bbox_feat)
+            core.nvprof_nvtx_pop()
             return rpn_loss, bbox_loss, mask_loss
         else:
             rois, rois_num, _ = self.rpn_head(body_feats, self.inputs)

@@ -26,6 +26,8 @@ from ..shape_spec import ShapeSpec
 from ..bbox_utils import bbox2delta
 from ..cls_utils import _get_class_default_kwargs
 from ppdet.modeling.layers import ConvNormLayer
+import paddle.profiler as profiler
+from paddle.fluid import core
 
 __all__ = ['TwoFCHead', 'XConvNormHead', 'BBoxHead']
 
@@ -264,12 +266,21 @@ class BBoxHead(nn.Layer):
         inputs (dict{Tensor}): The ground-truth of image
         """
         if self.training:
+            
+            
+            core.nvprof_nvtx_push("BBox::bbox_assigner")
             rois, rois_num, targets = self.bbox_assigner(rois, rois_num, inputs)
+            core.nvprof_nvtx_pop()
             self.assigned_rois = (rois, rois_num)
             self.assigned_targets = targets
-
+        core.nvprof_nvtx_push("BBox::roi_extractor")
         rois_feat = self.roi_extractor(body_feats, rois, rois_num)
-        bbox_feat = self.head(rois_feat)
+        core.nvprof_nvtx_pop()
+        
+        core.nvprof_nvtx_push("BBox::head")
+        bbox_feat = self.head(rois_feat)   
+        core.nvprof_nvtx_pop()
+
         if self.with_pool:
             feat = F.adaptive_avg_pool2d(bbox_feat, output_size=1)
             feat = paddle.squeeze(feat, axis=[2, 3])
@@ -283,17 +294,32 @@ class BBoxHead(nn.Layer):
         deltas = self.bbox_delta(feat)
 
         if self.training:
-            loss = self.get_loss(
-                scores,
-                deltas,
-                targets,
-                rois,
-                self.bbox_weight,
-                loss_normalize_pos=self.loss_normalize_pos)
+            # bbox cls
+            tgt_labels, tgt_bboxes, tgt_gt_inds = targets
+            tgt_labels = paddle.concat(tgt_labels) if len(
+                tgt_labels) > 1 else tgt_labels[0]
             
+            # with profiler.RecordEvent(name='BBox::nonzero0-temp1'):
+            #     temp1 = tgt_labels >= 0;
+            # with profiler.RecordEvent(name='BBox::nonzero0-temp2'):
+            #     print(">>>", temp1.shape)
+            #     temp2 = paddle.nonzero(temp1)
+            # with profiler.RecordEvent(name='BBox::nonzero0-temp3'):
+            #     valid_inds = temp2.flatten()
+
+            core.nvprof_nvtx_push("BBox::get_loss")
+            loss = self.get_loss(
+            scores,
+            deltas,
+            targets,
+            rois,
+            self.bbox_weight,
+            loss_normalize_pos=self.loss_normalize_pos)
+        
             if self.cot_relation is not None:
                 loss_cot = self.loss_cot(cot_scores, targets, self.cot_relation)
                 loss.update(loss_cot)
+            core.nvprof_nvtx_pop()
             return loss, bbox_feat
         else:
             if cot:
@@ -326,7 +352,10 @@ class BBoxHead(nn.Layer):
         # bbox cls
         tgt_labels = paddle.concat(tgt_labels) if len(
             tgt_labels) > 1 else tgt_labels[0]
-        valid_inds = paddle.nonzero(tgt_labels >= 0).flatten()
+        
+        temp1 = tgt_labels >= 0;
+        temp2 = paddle.nonzero(temp1)
+        valid_inds = temp2.flatten()
         if valid_inds.shape[0] == 0:
             loss_bbox[cls_name] = paddle.zeros([1], dtype='float32')
         else:
@@ -347,9 +376,10 @@ class BBoxHead(nn.Layer):
 
         cls_agnostic_bbox_reg = deltas.shape[1] == 4
 
-        fg_inds = paddle.nonzero(
-            paddle.logical_and(tgt_labels >= 0, tgt_labels <
-                               self.num_classes)).flatten()
+        temp4 = paddle.logical_and(tgt_labels >= 0, tgt_labels <
+                            self.num_classes)
+        print(">>>", temp4.shape)
+        fg_inds = paddle.nonzero(temp4).flatten()
 
         if fg_inds.numel() == 0:
             loss_bbox[reg_name] = paddle.zeros([1], dtype='float32')
