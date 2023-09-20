@@ -516,7 +516,7 @@ class Trainer(object):
             callback(prof)  # 执行该导出函数
             prof.summary(sorted_by=profiler.SortedKeys.GPUTotal, op_detail=True) # 打印表单，按 GPUTotal 排序表单项
         
-        p = profiler.Profiler(scheduler = [0, 3], on_trace_ready=my_on_trace_ready, timer_only=False) # 初始化 Profiler 对象
+        p = profiler.Profiler(scheduler = [0, 10], on_trace_ready=my_on_trace_ready, timer_only=False) # 初始化 Profiler 对象
         
         for epoch_id in range(self.start_epoch, self.cfg.epoch):
             self.status['mode'] = 'train'
